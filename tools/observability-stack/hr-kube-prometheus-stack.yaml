@@ -1,0 +1,75 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: flux-system
+spec:
+  interval: 30m
+  targetNamespace: monitoring
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  driftDetection:
+    mode: enabled
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: "72.*"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: flux-system
+  values:
+    alertmanager:
+      enabled: true
+      alertmanagerSpec:
+        replicas: 2
+      config:
+        route:
+          receiver: teams
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 12h
+        receivers:
+          - name: teams
+            webhook_configs:
+              - url: "${teams_webhook_url}"
+                send_resolved: true
+    grafana:
+      enabled: true
+      persistence:
+        enabled: false
+      service:
+        type: ClusterIP
+      sidecar:
+        dashboards:
+          enabled: true
+          label: grafana_dashboard
+          searchNamespace: monitoring
+    prometheus:
+      enabled: true
+      prometheusSpec:
+        retention: 15d
+        serviceMonitorSelectorNilUsesHelmValues: false
+        serviceMonitorSelector: {}
+        ruleSelectorNilUsesHelmValues: false
+        ruleSelector:
+          matchLabels:
+            release: kube-prometheus-stack
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 50Gi
+    kube-state-metrics:
+      enabled: true
+    prometheus-node-exporter:
+      enabled: true

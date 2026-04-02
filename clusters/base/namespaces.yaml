@@ -1,0 +1,226 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-training
+  labels:
+    app.kubernetes.io/managed-by: flux
+    kubernetes.io/metadata.name: ml-training
+    platform.mlops.io/workload: training
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ml-training-compute
+  namespace: ml-training
+  labels:
+    app.kubernetes.io/managed-by: flux
+    platform.mlops.io/workload: training
+spec:
+  hard:
+    requests.cpu: "64"
+    requests.memory: 512Gi
+    limits.cpu: "128"
+    limits.memory: 768Gi
+    limits.nvidia.com/gpu: "8"
+    persistentvolumeclaims: "20"
+    pods: "120"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ml-training-defaults
+  namespace: ml-training
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+        memory: 8Gi
+      defaultRequest:
+        cpu: 500m
+        memory: 2Gi
+    - type: PersistentVolumeClaim
+      max:
+        storage: 500Gi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-inference
+  labels:
+    app.kubernetes.io/managed-by: flux
+    kubernetes.io/metadata.name: ml-inference
+    platform.mlops.io/workload: inference
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ml-inference-compute
+  namespace: ml-inference
+  labels:
+    app.kubernetes.io/managed-by: flux
+    platform.mlops.io/workload: inference
+spec:
+  hard:
+    requests.cpu: "32"
+    requests.memory: 256Gi
+    limits.cpu: "64"
+    limits.memory: 384Gi
+    limits.nvidia.com/gpu: "16"
+    persistentvolumeclaims: "32"
+    pods: "200"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ml-inference-defaults
+  namespace: ml-inference
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "4"
+        memory: 16Gi
+      defaultRequest:
+        cpu: "1"
+        memory: 4Gi
+    - type: PersistentVolumeClaim
+      max:
+        storage: 200Gi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-platform
+  labels:
+    app.kubernetes.io/managed-by: flux
+    kubernetes.io/metadata.name: ml-platform
+    platform.mlops.io/workload: orchestration
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ml-platform-compute
+  namespace: ml-platform
+  labels:
+    app.kubernetes.io/managed-by: flux
+    platform.mlops.io/workload: orchestration
+spec:
+  hard:
+    requests.cpu: "48"
+    requests.memory: 192Gi
+    limits.cpu: "96"
+    limits.memory: 384Gi
+    persistentvolumeclaims: "40"
+    pods: "80"
+    services.loadbalancers: "2"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ml-platform-defaults
+  namespace: ml-platform
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+        memory: 4Gi
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+    - type: PersistentVolumeClaim
+      max:
+        storage: 1Ti
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/managed-by: flux
+    kubernetes.io/metadata.name: monitoring
+    platform.mlops.io/workload: observability
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: monitoring-compute
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/managed-by: flux
+    platform.mlops.io/workload: observability
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 64Gi
+    limits.cpu: "32"
+    limits.memory: 128Gi
+    persistentvolumeclaims: "20"
+    pods: "60"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: monitoring-defaults
+  namespace: monitoring
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 1Gi
+      defaultRequest:
+        cpu: 100m
+        memory: 256Mi
+    - type: PersistentVolumeClaim
+      max:
+        storage: 500Gi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/managed-by: flux
+    kubernetes.io/metadata.name: gateway
+    platform.mlops.io/workload: edge
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gateway-compute
+  namespace: gateway
+  labels:
+    app.kubernetes.io/managed-by: flux
+    platform.mlops.io/workload: edge
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    persistentvolumeclaims: "4"
+    pods: "30"
+    services.loadbalancers: "4"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gateway-defaults
+  namespace: gateway
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi

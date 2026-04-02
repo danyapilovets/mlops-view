@@ -1,0 +1,102 @@
+---
+name: Setup MLOps tooling
+description: Install pinned Helm, Kustomize, kubeconform, and Terraform (bash composite).
+
+inputs:
+  github-token:
+    description: Optional token for GitHub API (avoids rate limits when resolving kubeconform release)
+    required: false
+    default: ""
+
+  terraform-version:
+    description: Terraform version (semver, without v prefix)
+    default: "1.7.5"
+  helm-version:
+    description: Helm version
+    default: "3.15.4"
+  kustomize-version:
+    description: Kustomize version
+    default: "5.3.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Terraform
+      shell: bash
+      env:
+        TERRAFORM_VERSION: ${{ inputs.terraform-version }}
+      run: |
+        set -euo pipefail
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH=amd64 ;;
+          aarch64) ARCH=arm64 ;;
+        esac
+        TF_ZIP="terraform_${TERRAFORM_VERSION}_${OS}_${ARCH}.zip"
+        curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/${TF_ZIP}" -o "/tmp/${TF_ZIP}"
+        sudo unzip -o -d /usr/local/bin "/tmp/${TF_ZIP}"
+        terraform version
+
+    - name: Install Helm
+      shell: bash
+      env:
+        HELM_VERSION: ${{ inputs.helm-version }}
+      run: |
+        set -euo pipefail
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH=amd64 ;;
+          aarch64) ARCH=arm64 ;;
+        esac
+        curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-${OS}-${ARCH}.tar.gz" -o /tmp/helm.tgz
+        tar -xzf /tmp/helm.tgz -C /tmp
+        sudo mv "/tmp/${OS}-${ARCH}/helm" /usr/local/bin/helm
+        helm version
+
+    - name: Install Kustomize
+      shell: bash
+      env:
+        KUSTOMIZE_VERSION: ${{ inputs.kustomize-version }}
+      run: |
+        set -euo pipefail
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH=amd64 ;;
+          aarch64) ARCH=arm64 ;;
+        esac
+        curl -fsSL \
+          "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_${OS}_${ARCH}.tar.gz" \
+          -o /tmp/kustomize.tgz
+        tar -xzf /tmp/kustomize.tgz -C /tmp
+        sudo mv /tmp/kustomize /usr/local/bin/kustomize
+        kustomize version
+
+    - name: Install kubeconform (latest release)
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH=amd64 ;;
+          aarch64) ARCH=arm64 ;;
+        esac
+        CURL=(curl -fsSL)
+        if [[ -n "${GH_TOKEN}" ]]; then
+          CURL+=(-H "Authorization: Bearer ${GH_TOKEN}")
+        fi
+        TAG=$("${CURL[@]}" https://api.github.com/repos/yannh/kubeconform/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        if [[ -z "${TAG}" ]]; then
+          echo "Failed to resolve kubeconform release tag"
+          exit 1
+        fi
+        TARBALL="kubeconform-${OS}-${ARCH}.tar.gz"
+        curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${TAG}/${TARBALL}" -o /tmp/kubeconform.tgz
+        tar -xzf /tmp/kubeconform.tgz -C /tmp
+        sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+        kubeconform -v

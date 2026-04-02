@@ -1,0 +1,13 @@
+---
+flux_install_dir: "{{ ansible_env.HOME }}/.local/bin"
+flux_binary: "{{ flux_install_dir }}/flux"
+flux_github_branch: main
+flux_git_path: clusters/dev
+flux_version: ""
+# Optional Git URL for flux bootstrap git --url=... (HTTPS + GITHUB_TOKEN as bearer; mutually exclusive with owner/repo).
+flux_github_repository_url: ""
+flux_github_owner: ""
+flux_github_repository: ""
+# playbook_dir = ansible/playbooks → two dirnames = repository root (override per env in inventory)
+cluster_vars_manifest: "{{ playbook_dir | dirname | dirname }}/clusters/dev/cluster-vars.yaml"
+namespaces_manifest: "{{ playbook_dir | dirname | dirname }}/clusters/base/namespaces.yaml"

@@ -1,0 +1,111 @@
+---
+- name: Ensure local Flux install directory exists
+  ansible.builtin.file:
+    path: "{{ flux_install_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Check if flux CLI is installed
+  ansible.builtin.stat:
+    path: "{{ flux_binary }}"
+  register: _flux_stat
+
+- name: Install flux CLI (user-local)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -fsSL https://fluxcd.io/install.sh | bash -s -- {{ flux_version }}
+  environment:
+    FLUX_INSTALL_DIR: "{{ flux_install_dir }}"
+  args:
+    creates: "{{ flux_binary }}"
+  when: not _flux_stat.stat.exists
+
+- name: Assert GitHub bootstrap target is set
+  ansible.builtin.assert:
+    that:
+      - (flux_github_repository_url | default('') | length > 0)
+        or (flux_github_owner | default('') | length > 0 and flux_github_repository | default('') | length > 0)
+    fail_msg: >-
+      Set flux_github_repository_url, or flux_github_owner + flux_github_repository (inventory or -e).
+
+- name: Assert GITHUB_TOKEN is present for flux bootstrap github
+  ansible.builtin.assert:
+    that:
+      - lookup('env', 'GITHUB_TOKEN') | default('', true) | length > 0
+    fail_msg: "Export GITHUB_TOKEN with repo admin permissions for Flux to install the deploy key."
+
+- name: Flux bootstrap Git (explicit repository URL)
+  ansible.builtin.command:
+    argv:
+      - "{{ flux_binary }}"
+      - bootstrap
+      - git
+      - --url={{ flux_github_repository_url }}
+      - --branch={{ flux_github_branch }}
+      - --path={{ flux_git_path }}
+      - --with-bearer-token=true
+      - --password={{ lookup('env', 'GITHUB_TOKEN') | default('', true) }}
+      - --network-policy=false
+  register: _flux_bootstrap
+  changed_when: _flux_bootstrap.rc == 0
+  failed_when: >
+    _flux_bootstrap.rc != 0 and not (
+      'already bootstrapped' in (_flux_bootstrap.stderr | default('') ~ _flux_bootstrap.stdout | default(''))
+      or 'already installed' in (_flux_bootstrap.stderr | default('') ~ _flux_bootstrap.stdout | default(''))
+      or 'cluster is already' in (_flux_bootstrap.stderr | default('') ~ _flux_bootstrap.stdout | default(''))
+    )
+  when: flux_github_repository_url | default('') | length > 0
+  no_log: true
+
+- name: Flux bootstrap GitHub (owner and repository)
+  ansible.builtin.command:
+    argv:
+      - "{{ flux_binary }}"
+      - bootstrap
+      - github
+      - --owner={{ flux_github_owner }}
+      - --repository={{ flux_github_repository }}
+      - --branch={{ flux_github_branch }}
+      - --path={{ flux_git_path }}
+      - --network-policy=false
+  environment:
+    GITHUB_TOKEN: "{{ lookup('env', 'GITHUB_TOKEN') | default('', true) }}"
+  register: _flux_bootstrap
+  changed_when: _flux_bootstrap.rc == 0
+  failed_when: >
+    _flux_bootstrap.rc != 0 and not (
+      'already bootstrapped' in (_flux_bootstrap.stderr | default('') ~ _flux_bootstrap.stdout | default(''))
+      or 'already installed' in (_flux_bootstrap.stderr | default('') ~ _flux_bootstrap.stdout | default(''))
+      or 'cluster is already' in (_flux_bootstrap.stderr | default('') ~ _flux_bootstrap.stdout | default(''))
+    )
+  when: flux_github_repository_url | default('') | length == 0
+
+- name: Wait for flux-system namespace to be active
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - wait
+      - namespace/flux-system
+      - --for=jsonpath='{.status.phase}'=Active
+      - --timeout=300s
+  changed_when: false
+
+- name: Apply cluster-vars ConfigMap to flux-system
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - apply
+      - -f
+      - "{{ cluster_vars_manifest }}"
+  register: _cm_apply
+  changed_when: "'configured' in _cm_apply.stdout or 'created' in _cm_apply.stdout"
+
+- name: Apply initial platform namespaces (ml-training, ml-inference, ml-platform, monitoring, gateway)
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - apply
+      - -f
+      - "{{ namespaces_manifest }}"
+  register: _ns_apply
+  changed_when: "'configured' in _ns_apply.stdout or 'created' in _ns_apply.stdout"

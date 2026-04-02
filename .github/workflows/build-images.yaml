@@ -1,0 +1,127 @@
+---
+name: Build and push images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - "monitoring/exporters/**"
+      - ".github/workflows/build-images.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AR_HOST: us-central1-docker.pkg.dev
+
+jobs:
+  detect-changes:
+    name: Detect changed images
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    outputs:
+      training: ${{ steps.pick.outputs.training }}
+      inference: ${{ steps.pick.outputs.inference }}
+      pipeline_runner: ${{ steps.pick.outputs.pipeline_runner }}
+      ml_exporter: ${{ steps.pick.outputs.ml_exporter }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        if: github.event_name == 'push'
+        id: filter
+        with:
+          filters: |
+            training:
+              - 'docker/training/**'
+            inference:
+              - 'docker/inference/**'
+            pipeline-runner:
+              - 'docker/pipeline-runner/**'
+            ml-exporter:
+              - 'monitoring/exporters/**'
+
+      - name: Resolve build matrix flags
+        id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "training=true" >> "$GITHUB_OUTPUT"
+            echo "inference=true" >> "$GITHUB_OUTPUT"
+            echo "pipeline_runner=true" >> "$GITHUB_OUTPUT"
+            echo "ml_exporter=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "training=${{ steps.filter.outputs.training }}" >> "$GITHUB_OUTPUT"
+          echo "inference=${{ steps.filter.outputs.inference }}" >> "$GITHUB_OUTPUT"
+          echo "pipeline_runner=${{ steps.filter.outputs['pipeline-runner'] }}" >> "$GITHUB_OUTPUT"
+          echo "ml_exporter=${{ steps.filter.outputs['ml-exporter'] }}" >> "$GITHUB_OUTPUT"
+
+  build-and-push:
+    name: Build ${{ matrix.image }}
+    needs: [detect-changes]
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: training
+            context: docker/training
+            dockerfile: docker/training/Dockerfile
+            changed: ${{ needs.detect-changes.outputs.training }}
+          - image: inference
+            context: docker/inference
+            dockerfile: docker/inference/Dockerfile
+            changed: ${{ needs.detect-changes.outputs.inference }}
+          - image: pipeline-runner
+            context: docker/pipeline-runner
+            dockerfile: docker/pipeline-runner/Dockerfile
+            changed: ${{ needs.detect-changes.outputs.pipeline_runner }}
+          - image: ml-exporter
+            context: monitoring/exporters
+            dockerfile: monitoring/exporters/Dockerfile
+            changed: ${{ needs.detect-changes.outputs.ml_exporter }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.AR_HOST }} --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        if: matrix.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.AR_HOST }}/${{ vars.GCP_PROJECT_ID }}/mlops-docker/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.AR_HOST }}/${{ vars.GCP_PROJECT_ID }}/mlops-docker/${{ matrix.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan
+        if: matrix.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.AR_HOST }}/${{ vars.GCP_PROJECT_ID }}/mlops-docker/${{ matrix.image }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH

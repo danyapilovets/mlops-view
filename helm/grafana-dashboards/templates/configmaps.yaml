@@ -1,0 +1,17 @@
+{{- range $key, $dash := .Values.dashboards }}
+{{- if $dash.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "grafana-dashboards.fullname" $ }}-{{ $key | kebabcase }}
+  labels:
+    grafana_dashboard: "1"
+    {{- include "grafana-dashboards.labels" $ | nindent 4 }}
+  annotations:
+    grafana_folder: {{ $dash.folder | quote }}
+data:
+  {{ $dash.json }}: |
+{{ $.Files.Get (printf "dashboards/%s" $dash.json) | nindent 4 }}
+---
+{{- end }}
+{{- end }}

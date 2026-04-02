@@ -1,0 +1,65 @@
+# === Local AI development (not committed) ===
+.cursor/
+.tasks/
+AGENTS.md
+
+# === Terraform ===
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+
+# === Helm ===
+helm/**/charts/
+helm/**/*.tgz
+Chart.lock
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === Ansible ===
+*.retry
+
+# === Docker ===
+.docker-env
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Secrets ===
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+credentials.json
+service-account*.json

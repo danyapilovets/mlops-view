@@ -1,0 +1,59 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: llm-serving
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/name: llm-serving
+    app.kubernetes.io/component: inference
+spec:
+  interval: 10m
+  timeout: 15m
+  targetNamespace: ml-inference
+  releaseName: llm-serving
+  driftDetection:
+    mode: enabled
+  chart:
+    spec:
+      chart: helm/llm-serving
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+      interval: 5m
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+  values:
+    replicaCount: 1
+    model:
+      source: gs://${gcp_project}-models/llm-serving-primary
+      format: safetensors
+    resources:
+      limits:
+        cpu: "8"
+        memory: 32Gi
+        nvidia.com/gpu: "1"
+      requests:
+        cpu: "4"
+        memory: 16Gi
+        nvidia.com/gpu: "1"
+    nodeSelector:
+      cloud.google.com/gke-accelerator: nvidia-tesla-t4
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Equal
+        value: inference
+        effect: NoSchedule
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        namespace: monitoring
+        labels:
+          release: kube-prometheus-stack

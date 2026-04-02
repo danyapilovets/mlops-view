@@ -1,0 +1,42 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: nvidia-ngc
+  namespace: flux-system
+spec:
+  interval: 30m
+  url: https://helm.ngc.nvidia.com/nvidia
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: gpu-operator
+  namespace: flux-system
+spec:
+  interval: 30m
+  targetNamespace: gpu-operator
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: gpu-operator
+      version: "24.*"
+      sourceRef:
+        kind: HelmRepository
+        name: nvidia-ngc
+        namespace: flux-system
+  values:
+    driver:
+      enabled: true
+    toolkit:
+      enabled: true
+    dcgmExporter:
+      enabled: true
+      serviceMonitor:
+        enabled: true

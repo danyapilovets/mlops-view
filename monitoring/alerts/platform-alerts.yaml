@@ -1,0 +1,58 @@
+# Platform alerts: Airflow, MLflow, PVC capacity.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: platform.airflow
+      interval: 60s
+      rules:
+        - alert: AirflowDAGFailure
+          expr: airflow_dagrun_failed > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Airflow DAG run failure indicator present"
+            description: |
+              airflow_dagrun_failed > 0 for 10m. Confirm metric type (counter
+              vs gauge) in your Airflow Prometheus exporter and tune with
+              increase() if needed.
+
+    - name: platform.mlflow
+      interval: 30s
+      rules:
+        - alert: MLflowDown
+          expr: up{job="mlflow"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MLflow target down"
+            description: |
+              Prometheus up{job="mlflow"} == 0 for 5m. Ensure the ServiceMonitor
+              job label matches job="mlflow".
+
+    - name: platform.storage
+      interval: 60s
+      rules:
+        - alert: PVCNearFull
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes
+              /
+              clamp_min(kubelet_volume_stats_capacity_bytes, 1)
+            ) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PVC volume over 90% full"
+            description: |
+              kubelet_volume_stats_used_bytes / capacity > 0.9 for 10m on
+              namespace={{ $labels.namespace }} persistentvolumeclaim={{ $labels.persistentvolumeclaim }}.

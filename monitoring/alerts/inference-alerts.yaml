@@ -1,0 +1,71 @@
+# PrometheusRule for vLLM inference SLOs.
+# Apply: kubectl apply -f inference-alerts.yaml -n monitoring
+# vLLM 0.5.x exposes OpenMetrics with colon names; request outcomes use label
+# `finished_reason` (not HTTP status) on vllm:request_success_total.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: inference-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: inference.vllm
+      interval: 30s
+      rules:
+        - alert: HighInferenceLatency
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum(rate(vllm:e2e_request_latency_seconds_bucket[5m])) by (le)
+            ) > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "vLLM end-to-end latency p99 exceeds 10s"
+            description: |
+              p99 of vllm:e2e_request_latency_seconds is above 10s for 5m
+              (aggregated across series). Tune histogram_quantile grouping if
+              you need per-model or per-pod isolation.
+
+        - alert: HighInferenceErrorRate
+          expr: |
+            (
+              sum(rate(vllm:request_success_total{finished_reason!~"^(stop|length)$"}[5m]))
+              /
+              clamp_min(sum(rate(vllm:request_success_total[5m])), 1e-9)
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High vLLM request error / abnormal finish rate"
+            description: |
+              More than 5% of completed requests (vllm:request_success_total)
+              have finished_reason other than stop or length for 5m.
+              vLLM 0.5.x uses label finished_reason; for HTTP status, alert on
+              your API gateway metrics instead.
+
+        - alert: InferenceQueueBacklog
+          expr: vllm:num_requests_waiting > 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "vLLM scheduler queue backlog sustained"
+            description: |
+              vllm:num_requests_waiting has been above 10 for 10m.
+
+        - alert: LowGPUCacheUsage
+          expr: vllm:gpu_cache_usage_perc < 0.1
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: "Low vLLM GPU KV cache utilization (likely idle or cold)"
+            description: |
+              vllm:gpu_cache_usage_perc below 0.1 (10%) for 30m — workload may
+              be idle or severely underloaded.

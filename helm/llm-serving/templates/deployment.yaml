@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llm-serving.fullname" . }}
+  labels:
+    {{- include "llm-serving.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "llm-serving.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "llm-serving.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: model-data
+          emptyDir: {}
+        - name: download-script
+          configMap:
+            name: {{ include "llm-serving.fullname" . }}-download
+            defaultMode: 0755
+      {{- if .Values.model.source }}
+      initContainers:
+        - name: download-model
+          image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - /scripts/download_model.py
+          env:
+            - name: MODEL_SOURCE
+              value: {{ .Values.model.source | quote }}
+            - name: MODEL_DEST
+              value: /models
+          volumeMounts:
+            - name: model-data
+              mountPath: /models
+            - name: download-script
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      {{- end }}
+      containers:
+        - name: vllm
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: VLLM_MODEL_NAME
+              value: {{ .Values.env.VLLM_MODEL_NAME | default .Values.model.name | quote }}
+            - name: VLLM_TENSOR_PARALLEL_SIZE
+              value: {{ .Values.env.VLLM_TENSOR_PARALLEL_SIZE | quote }}
+            - name: VLLM_MAX_MODEL_LEN
+              value: {{ .Values.env.VLLM_MAX_MODEL_LEN | quote }}
+          command:
+            - vllm
+          args:
+            - serve
+            - $(VLLM_MODEL_NAME)
+            - --host
+            - "0.0.0.0"
+            - --port
+            - {{ .Values.service.port | quote }}
+            - --tensor-parallel-size
+            - $(VLLM_TENSOR_PARALLEL_SIZE)
+            - --max-model-len
+            - $(VLLM_MAX_MODEL_LEN)
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: model-data
+              mountPath: /models

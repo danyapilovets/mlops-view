@@ -1,0 +1,54 @@
+---
+name: Flux reconcile
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  reconcile:
+    name: Reconcile Flux GitRepository and Kustomization
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Configure kubectl (GKE)
+        run: |
+          set -euo pipefail
+          gcloud container clusters get-credentials "${{ vars.GKE_CLUSTER }}" \
+            --region "${{ vars.GKE_REGION }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}"
+
+      - name: Reconcile Flux source (GitRepository)
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          kubectl annotate gitrepository flux-system -n flux-system \
+            "reconcile.fluxcd.io/requestedAt=${TS}" \
+            --overwrite
+
+      - name: Reconcile Flux root Kustomization
+        env:
+          FLUX_NAME: ${{ vars.FLUX_ROOT_KUSTOMIZATION }}
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          NAME="${FLUX_NAME:-flux-system}"
+          kubectl annotate kustomization "${NAME}" -n flux-system \
+            "reconcile.fluxcd.io/requestedAt=${TS}" \
+            --overwrite

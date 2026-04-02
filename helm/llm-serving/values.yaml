@@ -1,0 +1,75 @@
+replicaCount: 1
+
+image:
+  repository: us-central1-docker.pkg.dev/mlops-platform-dev/mlops-docker/inference
+  tag: latest
+  pullPolicy: IfNotPresent
+
+model:
+  source: ""
+  name: ""
+
+resources:
+  requests:
+    nvidia.com/gpu: 1
+    memory: 16Gi
+    cpu: "4"
+  limits:
+    nvidia.com/gpu: 1
+    memory: 24Gi
+
+nodeSelector: {}
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Equal
+    value: inference
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: node_pool
+              operator: In
+              values:
+                - gpu-inference
+
+service:
+  type: ClusterIP
+  port: 8000
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 80
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+env:
+  VLLM_MODEL_NAME: ""
+  VLLM_TENSOR_PARALLEL_SIZE: "1"
+  VLLM_MAX_MODEL_LEN: "4096"

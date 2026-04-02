@@ -1,0 +1,201 @@
+---
+name: Deploy llm-serving (Helm)
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: Model identifier passed to the serving workload (e.g. Hugging Face id or GCS model id)
+        required: true
+        type: string
+      model_version:
+        description: Container image tag for inference (Artifact Registry)
+        required: true
+        type: string
+      environment:
+        description: Target values file (values-{env}.yaml)
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      strategy:
+        description: direct = rollout only; canary = rollout + Prometheus check on vllm:request_success_total
+        required: true
+        type: choice
+        options:
+          - direct
+          - canary
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AR_HOST: us-central1-docker.pkg.dev
+  HELM_RELEASE: llm-serving
+  TARGET_NAMESPACE: ml-inference
+
+jobs:
+  deploy:
+    name: Helm upgrade (${{ inputs.environment }})
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    env:
+      TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup tools
+        uses: ./.github/actions/setup-tools
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Configure kubectl
+        run: |
+          set -euo pipefail
+          gcloud container clusters get-credentials "${{ vars.GKE_CLUSTER }}" \
+            --region "${{ vars.GKE_REGION }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}"
+
+      - name: Helm upgrade (release matches _helpers.tpl — no duplicate chart suffix)
+        id: helm
+        run: |
+          set -euo pipefail
+          REPO="${{ env.AR_HOST }}/${{ vars.GCP_PROJECT_ID }}/mlops-docker/inference"
+          helm upgrade --install "${{ env.HELM_RELEASE }}" ./helm/llm-serving \
+            --namespace "${{ env.TARGET_NAMESPACE }}" \
+            --create-namespace \
+            --atomic \
+            --wait \
+            --timeout 30m \
+            -f "helm/llm-serving/values-${{ inputs.environment }}.yaml" \
+            --set-string model.name="${{ inputs.model_name }}" \
+            --set image.repository="${REPO}" \
+            --set image.tag="${{ inputs.model_version }}"
+
+      - name: Wait for Deployment rollout
+        run: |
+          set -euo pipefail
+          kubectl rollout status deployment/${{ env.HELM_RELEASE }} \
+            -n "${{ env.TARGET_NAMESPACE }}" \
+            --timeout=30m
+
+      - name: Canary — Prometheus (vllm:request_success_total, finished_reason)
+        if: inputs.strategy == 'canary'
+        env:
+          PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PROMETHEUS_URL}" ]]; then
+            echo "::error::vars.PROMETHEUS_URL is required when strategy=canary"
+            exit 1
+          fi
+          # Healthy completions: finished_reason="stop" (vLLM OpenMetrics)
+          QUERY='sum(rate(vllm:request_success_total{finished_reason="stop"}[5m]))'
+          ok_streak=0
+          for i in $(seq 1 36); do
+            resp="$(curl -fsS -G "${PROMETHEUS_URL}/api/v1/query" --data-urlencode "query=${QUERY}")"
+            val="$(python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('data',{}).get('result',[]); print(r[0]['value'][1] if r else '0')" <<<"${resp}")"
+            if python3 -c "import sys; v=float(sys.argv[1]); sys.exit(0 if v>0 else 1)" "${val}" 2>/dev/null; then
+              ok_streak=$((ok_streak + 1))
+            else
+              ok_streak=0
+            fi
+            if [[ "${ok_streak}" -ge 3 ]]; then
+              echo "Canary signal OK (stop finished_reason rate > 0 for 3 consecutive checks)."
+              exit 0
+            fi
+            echo "Check ${i}/36: vllm:request_success_total{finished_reason=stop} 5m rate = ${val}"
+            sleep 10
+          done
+          echo "::error::Canary monitoring timed out waiting for vllm:request_success_total{finished_reason=\"stop\"}"
+          exit 1
+
+      - name: Notify Microsoft Teams (success)
+        if: success()
+        shell: bash
+        env:
+          TITLE: llm-serving deployment succeeded
+          COLOR: "2EA043"
+          ENV_NAME: ${{ inputs.environment }}
+          MODEL_NAME: ${{ inputs.model_name }}
+          MODEL_TAG: ${{ inputs.model_version }}
+          STRATEGY: ${{ inputs.strategy }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TEAMS_WEBHOOK_URL:-}" ]]; then
+            echo "TEAMS_WEBHOOK_URL not set; skipping Teams notification."
+            exit 0
+          fi
+          BODY="$(python3 -c "
+          import json, os
+          card = {
+            '@type': 'MessageCard',
+            '@context': 'https://schema.org/extensions',
+            'summary': os.environ['TITLE'],
+            'themeColor': os.environ['COLOR'],
+            'title': os.environ['TITLE'],
+            'sections': [{
+              'facts': [
+                {'name': 'Environment', 'value': os.environ['ENV_NAME']},
+                {'name': 'Model', 'value': os.environ['MODEL_NAME']},
+                {'name': 'Image tag', 'value': os.environ['MODEL_TAG']},
+                {'name': 'Strategy', 'value': os.environ['STRATEGY']},
+                {'name': 'Workflow', 'value': os.environ['RUN_URL']},
+              ]
+            }]
+          }
+          print(json.dumps(card))
+          ")"
+          curl -fsS -H "Content-Type: application/json" -d "${BODY}" "${TEAMS_WEBHOOK_URL}"
+
+      - name: Notify Microsoft Teams (failure)
+        if: failure()
+        shell: bash
+        env:
+          TITLE: llm-serving deployment failed
+          COLOR: "D1242F"
+          ENV_NAME: ${{ inputs.environment }}
+          MODEL_NAME: ${{ inputs.model_name }}
+          MODEL_TAG: ${{ inputs.model_version }}
+          STRATEGY: ${{ inputs.strategy }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TEAMS_WEBHOOK_URL:-}" ]]; then
+            exit 0
+          fi
+          BODY="$(python3 -c "
+          import json, os
+          card = {
+            '@type': 'MessageCard',
+            '@context': 'https://schema.org/extensions',
+            'summary': os.environ['TITLE'],
+            'themeColor': os.environ['COLOR'],
+            'title': os.environ['TITLE'],
+            'sections': [{
+              'facts': [
+                {'name': 'Environment', 'value': os.environ['ENV_NAME']},
+                {'name': 'Model', 'value': os.environ['MODEL_NAME']},
+                {'name': 'Image tag', 'value': os.environ['MODEL_TAG']},
+                {'name': 'Strategy', 'value': os.environ['STRATEGY']},
+                {'name': 'Workflow', 'value': os.environ['RUN_URL']},
+              ]
+            }]
+          }
+          print(json.dumps(card))
+          ")"
+          curl -fsS -H "Content-Type: application/json" -d "${BODY}" "${TEAMS_WEBHOOK_URL}"

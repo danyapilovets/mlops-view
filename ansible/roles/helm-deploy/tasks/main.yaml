@@ -1,0 +1,89 @@
+---
+- name: Validate required Helm variables
+  ansible.builtin.assert:
+    that:
+      - chart_path | default("") | length > 0
+      - release_name | default("") | length > 0
+      - namespace | default("") | length > 0
+      - values_file | default("") | length > 0
+    fail_msg: "Set chart_path, release_name, namespace, and values_file (e.g. via -e)."
+
+- name: Add Helm repositories (helm_repositories list)
+  ansible.builtin.command:
+    argv:
+      - helm
+      - repo
+      - add
+      - "{{ repo_item.name }}"
+      - "{{ repo_item.url }}"
+  loop: "{{ helm_repositories | default([]) }}"
+  loop_control:
+    loop_var: repo_item
+  register: _helm_repos_multi
+  failed_when: false
+  changed_when: true
+
+- name: Assert Helm repository adds succeeded (or already present)
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0 or ('already exists' in ((item.stderr | default('')) ~ (item.stdout | default(''))))
+    fail_msg: "helm repo add failed for {{ item.item.name | default('unknown') }}: {{ item.stderr | default('') }}"
+  loop: "{{ _helm_repos_multi.results }}"
+  when: helm_repositories | default([]) | length > 0
+
+- name: Add Helm repository (legacy helm_repo_name / helm_repo_url)
+  ansible.builtin.command:
+    argv:
+      - helm
+      - repo
+      - add
+      - "{{ helm_repo_name }}"
+      - "{{ helm_repo_url }}"
+  when:
+    - helm_repo_name | default("") | length > 0
+    - helm_repo_url | default("") | length > 0
+  register: _helm_repo
+  changed_when: "'has been added' in (_helm_repo.stderr | default('')) or _helm_repo.rc == 0"
+  failed_when: _helm_repo.rc != 0 and 'already exists' not in (_helm_repo.stderr | default(''))
+
+- name: Helm repo update (after adds; skip when no Helm repos configured)
+  ansible.builtin.command:
+    argv:
+      - helm
+      - repo
+      - update
+  register: _helm_repo_update
+  changed_when: false
+  failed_when: _helm_repo_update.rc != 0
+  when: >
+    (helm_repositories | default([]) | length > 0)
+    or (helm_repo_name | default('') | length > 0 and helm_repo_url | default('') | length > 0)
+
+- name: Helm dependency build
+  ansible.builtin.command:
+    argv:
+      - helm
+      - dependency
+      - build
+    chdir: "{{ chart_path }}"
+  register: _helm_dep
+  changed_when: true
+
+- name: Helm upgrade --install (atomic, wait)
+  ansible.builtin.command:
+    argv:
+      - helm
+      - upgrade
+      - --install
+      - "{{ release_name }}"
+      - .
+      - --namespace
+      - "{{ namespace }}"
+      - --create-namespace
+      - --atomic
+      - --wait
+      - --timeout
+      - "{{ helm_wait_timeout | default('15m') }}"
+      - -f
+      - "{{ values_file }}"
+    chdir: "{{ chart_path }}"

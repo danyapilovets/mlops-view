@@ -1,0 +1,64 @@
+# PrometheusRule for NVIDIA DCGM (dcgm-exporter) and GPU node health.
+# DCGM labels: gpu, UUID, device, modelName, Hostname (join node_pool via
+# kube_node_labels on Hostname if needed).
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gpu-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: inference.dcgm
+      interval: 30s
+      rules:
+        - alert: GPUHighUtilization
+          expr: DCGM_FI_DEV_GPU_UTIL > 95
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU utilization above 95% for 15m"
+            description: |
+              DCGM_FI_DEV_GPU_UTIL > 95 on Hostname={{ $labels.Hostname }}
+              GPU={{ $labels.gpu }} (device={{ $labels.device }}).
+
+        - alert: GPUMemoryExhaustion
+          expr: |
+            (
+              DCGM_FI_DEV_FB_USED
+              /
+              clamp_min(DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE, 1)
+            ) > 0.95
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU frame-buffer usage above 95%"
+            description: |
+              DCGM_FI_DEV_FB_USED / (USED + FREE) > 0.95 on
+              Hostname={{ $labels.Hostname }} GPU={{ $labels.gpu }}.
+
+    - name: inference.gpu-nodes
+      interval: 30s
+      rules:
+        - alert: GPUNodeNotReady
+          expr: |
+            (
+              kube_node_status_condition{condition="Ready",status="true"} == 0
+            )
+            and on (node)
+            (
+              kube_node_labels{label_node_pool=~".*gpu.*"}
+            )
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU pool node NotReady"
+            description: |
+              Node {{ $labels.node }} (label_node_pool matches .*gpu.*) is not
+              Ready. Adjust the kube_node_labels matcher if your GPU nodes use
+              a different label (e.g. accelerator).

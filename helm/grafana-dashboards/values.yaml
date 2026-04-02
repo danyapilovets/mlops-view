@@ -1,0 +1,12 @@
+nameOverride: ""
+fullnameOverride: ""
+
+dashboards:
+  inferenceOverview:
+    enabled: true
+    folder: "MLOps"
+    json: inferenceOverview.json
+  gpuUtilization:
+    enabled: true
+    folder: "MLOps"
+    json: gpuUtilization.json

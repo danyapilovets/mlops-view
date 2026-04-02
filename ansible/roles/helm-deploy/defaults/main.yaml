@@ -1,0 +1,7 @@
+---
+# Optional: add one repo via legacy single pair (see tasks).
+helm_repo_name: ""
+helm_repo_url: ""
+# Optional: list of { name, url } for helm repo add (before dependency build).
+helm_repositories: []
+helm_wait_timeout: 15m

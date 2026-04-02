@@ -1,0 +1,127 @@
+---
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-validate:
+    name: Terraform fmt / validate / tflint
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          terraform_wrapper: false
+
+      - uses: terraform-linters/tflint-action@v4
+        with:
+          tflint_version: v0.50.3
+          working_directory: terraform
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        run: terraform validate -no-color -var-file=environments/dev.tfvars
+
+  helm-lint:
+    name: Helm lint (all charts)
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup tools
+        uses: ./.github/actions/setup-tools
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Helm lint
+        run: |
+          set -euo pipefail
+          for chart in helm/llm-serving helm/ml-gateway helm/grafana-dashboards; do
+            helm lint "${chart}"
+          done
+
+  manifest-validate:
+    name: Kustomize / kubeconform / Helm template
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup tools
+        uses: ./.github/actions/setup-tools
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate manifests
+        uses: ./.github/actions/validate-manifests
+
+  python-lint:
+    name: Ruff and pytest
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Pytest
+        run: pytest tests/ -v
+
+  shell-lint:
+    name: Shellcheck
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: scripts
+
+  docker-lint:
+    name: Hadolint
+    runs-on: ${{ vars.USE_GITHUB_HOSTED_RUNNER == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted", "k8s-runners"]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - docker/training/Dockerfile
+          - docker/inference/Dockerfile
+          - docker/pipeline-runner/Dockerfile
+          - monitoring/exporters/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          failure-threshold: error

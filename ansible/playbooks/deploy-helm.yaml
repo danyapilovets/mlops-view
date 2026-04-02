@@ -1,0 +1,14 @@
+---
+# Deploy a Helm chart without Flux (e.g. ad-hoc or legacy clusters).
+# Example:
+#   ansible-playbook -i inventories/dev/hosts.yaml playbooks/deploy-helm.yaml \
+#     -e chart_path=../../helm/llm-serving \
+#     -e release_name=llm-serving \
+#     -e namespace=ml-inference \
+#     -e values_file=../../helm/llm-serving/values-dev.yaml
+- name: Helm upgrade --install
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: helm-deploy

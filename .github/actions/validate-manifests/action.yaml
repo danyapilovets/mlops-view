@@ -1,0 +1,81 @@
+---
+name: Validate Kubernetes manifests
+description: Kustomize build + kubeconform, Helm lint and helm template for all charts.
+
+inputs:
+  kubernetes-version:
+    description: Kubernetes version for kubeconform OpenAPI schema
+    default: "1.29.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Kustomize build and kubeconform (cluster overlays)
+      shell: bash
+      env:
+        K8S_VER: ${{ inputs.kubernetes-version }}
+      run: |
+        set -euo pipefail
+        for cluster in dev staging prod; do
+          echo "==> clusters/${cluster}"
+          kustomize build "clusters/${cluster}" | kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -kubernetes-version "${K8S_VER}" \
+            -summary
+        done
+
+    - name: Kustomize build and kubeconform (apps)
+      shell: bash
+      env:
+        K8S_VER: ${{ inputs.kubernetes-version }}
+      run: |
+        set -euo pipefail
+        echo "==> apps/"
+        kustomize build apps | kubeconform \
+          -strict \
+          -ignore-missing-schemas \
+          -kubernetes-version "${K8S_VER}" \
+          -summary
+
+    - name: Kustomize build and kubeconform (tools)
+      shell: bash
+      env:
+        K8S_VER: ${{ inputs.kubernetes-version }}
+      run: |
+        set -euo pipefail
+        for dir in tools/*/; do
+          [[ -f "${dir}kustomization.yaml" ]] || continue
+          echo "==> ${dir}"
+          kustomize build "${dir}" | kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -kubernetes-version "${K8S_VER}" \
+            -summary
+        done
+
+    - name: Helm lint all charts
+      shell: bash
+      run: |
+        set -euo pipefail
+        for chart in helm/*/; do
+          [[ -f "${chart}Chart.yaml" ]] || continue
+          echo "==> helm lint ${chart}"
+          helm lint "${chart}"
+        done
+
+    - name: Helm template all charts
+      shell: bash
+      env:
+        K8S_VER: ${{ inputs.kubernetes-version }}
+      run: |
+        set -euo pipefail
+        helm template llm-serving helm/llm-serving \
+          -f helm/llm-serving/values.yaml | kubeconform \
+          -strict -ignore-missing-schemas -kubernetes-version "${K8S_VER}" -summary
+
+        helm template ml-gateway helm/ml-gateway | kubeconform \
+          -strict -ignore-missing-schemas -kubernetes-version "${K8S_VER}" -summary
+
+        helm template grafana-dashboards helm/grafana-dashboards | kubeconform \
+          -strict -ignore-missing-schemas -kubernetes-version "${K8S_VER}" -summary

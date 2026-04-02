@@ -1,0 +1,23 @@
+---
+# Production GKE + GitOps naming contract ($PROJECT_ID = gcp_project)
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: auto_silent
+  vars:
+    gcp_project: mlops-platform-prod
+    gcp_region: us-central1
+    gke_cluster_name: mlops-platform-prod-gke
+    artifact_registry: "us-central1-docker.pkg.dev/{{ gcp_project }}/mlops-docker"
+    terraform_state_bucket: "{{ gcp_project }}-terraform-state"
+    flux_github_repository_url: ""
+    flux_github_owner: ""
+    flux_github_repository: ""
+    flux_github_branch: main
+    flux_git_path: clusters/prod
+    flux_version: "2.4.0"
+    cluster_vars_manifest: "{{ inventory_dir }}/../../clusters/prod/cluster-vars.yaml"
+    namespaces_manifest: "{{ inventory_dir }}/../../clusters/base/namespaces.yaml"
+    helm_repo_name: ""
+    helm_repo_url: ""

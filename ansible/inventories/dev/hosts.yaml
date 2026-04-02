@@ -1,0 +1,26 @@
+---
+# Dev GKE + GitOps naming contract ($PROJECT_ID = gcp_project; cluster name from terraform output).
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: auto_silent
+  vars:
+    gcp_project: mlops-platform-dev
+    gcp_region: us-central1
+    gke_cluster_name: mlops-platform-dev-gke
+    artifact_registry: "us-central1-docker.pkg.dev/{{ gcp_project }}/mlops-docker"
+    terraform_state_bucket: "{{ gcp_project }}-terraform-state"
+    # Flux bootstrap (override via -e or CI secrets)
+    flux_github_repository_url: "" # optional: https://github.com/org/repo.git → flux bootstrap git
+    flux_github_owner: "" # e.g. my-org (used with flux_github_repository when URL unset)
+    flux_github_repository: "" # repo name without org, e.g. mlops-view
+    flux_github_branch: main
+    flux_git_path: clusters/dev
+    flux_version: "2.4.0"
+    # Resolved from ansible/inventories/<env> → repository root
+    cluster_vars_manifest: "{{ inventory_dir }}/../../clusters/dev/cluster-vars.yaml"
+    namespaces_manifest: "{{ inventory_dir }}/../../clusters/base/namespaces.yaml"
+    # Helm deploy playbook extras (optional)
+    helm_repo_name: ""
+    helm_repo_url: ""

@@ -1,0 +1,9 @@
+---
+# Install Flux CD, bootstrap GitOps repo, apply cluster-vars ConfigMap and platform namespaces.
+# Prerequisites: kubectl context points at the target GKE cluster; GITHUB_TOKEN for flux bootstrap.
+- name: Bootstrap GKE cluster (Flux + GitOps + namespaces)
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - role: gke-bootstrap
